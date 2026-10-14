@@ -11,42 +11,21 @@ FORMAT = (
 )
 
 
-def _opts(outtmpl, playlist):
-    return {
+def download_video(url):
+    opts = {
         "format": FORMAT,
         "merge_output_format": "mp4",
-        "outtmpl": str(DOWNLOAD_DIR / outtmpl),
+        "outtmpl": str(DOWNLOAD_DIR / "%(title)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
-        "noplaylist": not playlist,
-        "ignoreerrors": playlist,
+        "noplaylist": True,
     }
-
-
-def _final_path(ydl, info):
-    downloads = info.get("requested_downloads")
-    if downloads and downloads[0].get("filepath"):
-        return Path(downloads[0]["filepath"])
-    return Path(ydl.prepare_filename(info)).with_suffix(".mp4")
-
-
-def download_single(url):
-    with yt_dlp.YoutubeDL(_opts("%(title)s.%(ext)s", playlist=False)) as ydl:
+    with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
         title = info.get("title", "video")
-        path = _final_path(ydl, info)
+        downloads = info.get("requested_downloads")
+        if downloads and downloads[0].get("filepath"):
+            path = Path(downloads[0]["filepath"])
+        else:
+            path = Path(ydl.prepare_filename(info)).with_suffix(".mp4")
     return path, title
-
-
-def download_playlist(url):
-    results = []
-    with yt_dlp.YoutubeDL(_opts("%(playlist_index)02d - %(title)s.%(ext)s", playlist=True)) as ydl:
-        info = ydl.extract_info(url, download=True)
-        for entry in info.get("entries", []):
-            if not entry:
-                continue
-            title = entry.get("title", "video")
-            path = _final_path(ydl, entry)
-            if path.exists():
-                results.append((path, title))
-    return results

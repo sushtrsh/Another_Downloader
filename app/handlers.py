@@ -11,11 +11,10 @@ from app.config import (
     ONLY_OWNER_CAN_DELETE,
     PROTECT_CONTENT,
 )
-from app.downloader import download_playlist, download_single
-from app.utils import is_valid_url, looks_like_playlist
+from app.downloader import download_video
+from app.utils import is_valid_url
 
 log = logging.getLogger(__name__)
-MAX_SAVED_URLS = 30
 
 
 def is_allowed(user_id):
@@ -37,20 +36,13 @@ def message_link(chat_id, message_id):
     return None
 
 
-def build_keyboard(key):
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🎬 Download Video", callback_data=f"single|{key}"),
-        InlineKeyboardButton("📋 Download Playlist", callback_data=f"playlist|{key}"),
-    ]])
-
-
 def delete_keyboard(owner_id):
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("🗑 Hapus", callback_data=f"del|{owner_id}")
     ]])
 
 
-async def send_video_file(ctx, target, owner_id, path, title, caption=None):
+async def send_video_file(ctx, target, owner_id, path, title):
     """Kirim video ke target, lalu hapus file lokal. Return Message atau None."""
     if not path.exists():
         return None
@@ -62,7 +54,7 @@ async def send_video_file(ctx, target, owner_id, path, title, caption=None):
             return await ctx.bot.send_video(
                 chat_id=target,
                 video=f,
-                caption=caption or f"🎬 {title}",
+                caption=f"🎬 {title}",
                 supports_streaming=True,
                 reply_markup=delete_keyboard(owner_id),
                 protect_content=PROTECT_CONTENT,
@@ -79,7 +71,7 @@ async def start(update, ctx):
         await deny(update)
         return
     await update.message.reply_text(
-        "🎬 *YouTube Video Downloader Bot*\n\nKirim link YouTube.\nPilih mau download satu video atau seluruh playlist.",
+        "🎬 *YouTube Video Downloader Bot*\n\nKirim link video YouTube, nanti videonya dikirim.",
         parse_mode="Markdown",
     )
 
@@ -89,7 +81,7 @@ async def help_cmd(update, ctx):
         await deny(update)
         return
     await update.message.reply_text(
-        f"📋 *Cara pakai:*\n\n1. Kirim link YouTube\n2. Pilih tombol Download\n3. Tunggu video dikirim\n4. Tekan 🗑 Hapus kalau sudah selesai\n\n*Limit:* Maks {MAX_FILE_MB}MB per file",
+        f"📋 *Cara pakai:*\n\n1. Kirim link video YouTube\n2. Tunggu video dikirim\n3. Tekan 🗑 Hapus kalau sudah selesai\n\n*Limit:* Maks {MAX_FILE_MB}MB per file",
         parse_mode="Markdown",
     )
 
@@ -102,102 +94,52 @@ async def id_cmd(update, ctx):
 
 
 async def handle_url(update, ctx):
-    if not is_allowed(update.effective_user.id):
-        await deny(update)
-        return
-    url = update.message.text.strip()
-    if not is_valid_url(url):
-        await update.message.reply_text("❌ URL tidak dikenali. Kirim link YouTube yang valid.")
-        return
-
-    # callback_data maksimal 64 byte, jadi URL disimpan di memori dan dipanggil lewat ID pendek
-    key = update.message.message_id
-    urls = ctx.user_data.setdefault("urls", {})
-    urls[key] = url
-    while len(urls) > MAX_SAVED_URLS:
-        urls.pop(next(iter(urls)))
-
-    hint = "📋 Sepertinya ini link playlist." if looks_like_playlist(url) else "🔗 Link siap didownload."
-    await update.message.reply_text(f"{hint}\n\nMau download apa?", reply_markup=build_keyboard(key))
-
-
-async def handle_download(update, ctx):
-    query = update.callback_query
-    user_id = query.from_user.id
+    user_id = update.effective_user.id
     if not is_allowed(user_id):
         await deny(update)
         return
-    await query.answer()
 
-    mode, key = query.data.split("|", 1)
-    url = ctx.user_data.get("urls", {}).get(int(key)) if key.isdigit() else None
-    if not url:
-        await query.edit_message_text("⌛ Link sudah kadaluarsa. Kirim ulang link-nya.")
+    url = update.message.text.strip()
+    if "youtube.com/playlist" in url:
+        await update.message.reply_text("❌ Playlist tidak didukung. Kirim link satu video saja.")
+        return
+    if not is_valid_url(url):
+        await update.message.reply_text("❌ URL tidak dikenali. Kirim link video YouTube yang valid.")
         return
 
     in_channel = bool(CHANNEL_ID)
     target = CHANNEL_ID if in_channel else update.effective_chat.id
+    status = await update.message.reply_text("⏳ Download video...")
+
     loop = asyncio.get_running_loop()
+    try:
+        path, title = await loop.run_in_executor(None, download_video, url)
+    except yt_dlp.utils.DownloadError as e:
+        log.error("Download error: %s", e)
+        await status.edit_text("❌ Gagal download. Pastikan link valid dan video tidak private.")
+        return
+    except Exception as e:
+        log.error("Error: %s", e)
+        await status.edit_text("❌ Error tak terduga. Coba lagi.")
+        return
 
-    if mode == "single":
-        await query.edit_message_text("⏳ Download video...")
-        try:
-            path, title = await loop.run_in_executor(None, download_single, url)
-        except yt_dlp.utils.DownloadError as e:
-            log.error("Download error: %s", e)
-            await query.edit_message_text("❌ Gagal download. Pastikan link valid dan video tidak private.")
-            return
-        except Exception as e:
-            log.error("Error: %s", e)
-            await query.edit_message_text("❌ Error tak terduga. Coba lagi.")
-            return
+    await status.edit_text("📤 Mengirim video...")
+    msg = await send_video_file(ctx, target, user_id, path, title)
+    if not msg:
+        await status.edit_text(
+            f"❌ Gagal kirim video (limit {MAX_FILE_MB}MB, atau bot belum jadi admin di channel)."
+        )
+        return
 
-        await query.edit_message_text("📤 Mengirim video...")
-        msg = await send_video_file(ctx, target, user_id, path, title)
-        if not msg:
-            await query.edit_message_text(
-                f"❌ Gagal kirim video (limit {MAX_FILE_MB}MB, atau bot belum jadi admin di channel)."
-            )
-            return
-
-        if in_channel:
-            link = message_link(target, msg.message_id)
-            markup = (
-                InlineKeyboardMarkup([[InlineKeyboardButton("📺 Buka di channel", url=link)]])
-                if link else None
-            )
-            await query.edit_message_text("✅ Video terkirim ke channel.", reply_markup=markup)
-        else:
-            await query.delete_message()
-
-    elif mode == "playlist":
-        await query.edit_message_text("⏳ Mengambil info playlist...")
-        try:
-            results = await loop.run_in_executor(None, download_playlist, url)
-        except Exception as e:
-            log.error("Playlist error: %s", e)
-            await query.edit_message_text("❌ Gagal download playlist.")
-            return
-        if not results:
-            await query.edit_message_text("❌ Tidak ada video yang berhasil didownload.")
-            return
-
-        total = len(results)
-        sent = 0
-        skipped = 0
-        for i, (path, title) in enumerate(results, 1):
-            await query.edit_message_text(f"📤 Mengirim {i}/{total}: {title[:40]}...")
-            msg = await send_video_file(ctx, target, user_id, path, title, caption=f"🎬 {title} ({i}/{total})")
-            if msg:
-                sent += 1
-            else:
-                skipped += 1
-
-        dest = "ke channel" if in_channel else "ke chat ini"
-        summary = f"✅ Selesai! {sent} video dikirim {dest}."
-        if skipped:
-            summary += f"\n⚠️ {skipped} video dilewati (terlalu besar atau gagal kirim)."
-        await query.edit_message_text(summary)
+    if in_channel:
+        link = message_link(target, msg.message_id)
+        markup = (
+            InlineKeyboardMarkup([[InlineKeyboardButton("📺 Buka di channel", url=link)]])
+            if link else None
+        )
+        await status.edit_text("✅ Video terkirim ke channel.", reply_markup=markup)
+    else:
+        await status.delete()
 
 
 async def handle_delete(update, ctx):

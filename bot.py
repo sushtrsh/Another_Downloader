@@ -9,14 +9,7 @@ from telegram.ext import (
 )
 
 from app.config import BOT_TOKEN, CHANNEL_ID, LOCAL_API_URL
-from app.handlers import (
-    handle_delete,
-    handle_download,
-    handle_url,
-    help_cmd,
-    id_cmd,
-    start,
-)
+from app.handlers import handle_delete, handle_url, help_cmd, id_cmd, start
 
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -52,7 +45,6 @@ def main():
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("id", id_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
-    app.add_handler(CallbackQueryHandler(handle_download, pattern=r"^(single|playlist)\|"))
     app.add_handler(CallbackQueryHandler(handle_delete, pattern=r"^del\|"))
     log.info("Bot jalan... tekan Ctrl+C untuk berhenti.")
     app.run_polling(drop_pending_updates=True)

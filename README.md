@@ -1,14 +1,16 @@
 # YouTube Video Downloader Bot
 
-A simple Telegram bot that downloads YouTube videos and playlists, then sends them to your chat or a channel.
+A simple Telegram bot that downloads a YouTube video and sends it to your chat or a channel.
 
 ## Features
 
-- Download a single YouTube video or a whole playlist
+- Send a YouTube link, get the video back
 - Sends the video to a channel (or back to your chat) with a delete button
 - Deletes the local file right after sending
 - Access control: only allowed users can use the bot
 - Optional Local Bot API support for files up to 2 GB
+
+Single videos only. Playlists are not supported.
 
 ## Requirements
 
@@ -26,6 +28,13 @@ python bot.py
 ```
 
 On Termux, install the tools first: `pkg install python ffmpeg`.
+
+## Usage
+
+1. Send `/start` to the bot
+2. Send a YouTube video link
+3. Wait for the video to arrive
+4. Tap **Hapus** to delete it when you are done
 
 ## Config
 
@@ -60,5 +69,5 @@ If you use a channel, add the bot as admin with *Post messages* and *Delete mess
 ## Notes
 
 - Official Telegram API limits bot uploads to 50 MB. Use a Local Bot API server for up to 2 GB.
-- Never share your `config.json` or bot token
+- Never share your `config.json` or bot token.
 - Only download content you have the right to download.
