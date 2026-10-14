@@ -1,0 +1,13 @@
+config*.json
+!config.example.json
+.env
+downloads/
+*.mp4
+*.mp3
+__pycache__/
+*.pyc
+venv/
+.venv/
+.vscode/
+.idea/
+*.bak
