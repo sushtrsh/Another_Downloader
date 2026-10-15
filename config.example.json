@@ -1,6 +1,8 @@
 {
   "BOT_TOKEN": "PUT_YOUR_BOT_TOKEN_HERE",
   "LOCAL_API_URL": "",
+  "API_ID": ,
+  "API_HASH": "",
   "MAX_HEIGHT": 720,
   "CHANNEL_ID": "",
   "ALLOWED_USER_IDS": [],
