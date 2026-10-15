@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 
 import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -13,6 +14,9 @@ from app.config import (
 )
 from app.downloader import download_video
 from app.utils import is_valid_url
+
+QUALITIES = (480, 720, 1080)
+PENDING_LIMIT = 200  # maksimal request yang menunggu pilihan resolusi
 
 log = logging.getLogger(__name__)
 
@@ -28,11 +32,10 @@ async def deny(update):
         await update.effective_message.reply_text("⛔ Kamu tidak punya akses ke bot ini.")
 
 
-def message_link(chat_id, message_id):
-    if isinstance(chat_id, int) and str(chat_id).startswith("-100"):
-        return f"https://t.me/c/{str(chat_id)[4:]}/{message_id}"
-    if isinstance(chat_id, str) and chat_id.startswith("@"):
-        return f"https://t.me/{chat_id[1:]}/{message_id}"
+def message_link(msg):
+    chat = msg.chat
+    if chat.username:  # channel public
+        return f"https://t.me/{chat.username}/{msg.message_id}"
     return None
 
 
@@ -81,7 +84,7 @@ async def help_cmd(update, ctx):
         await deny(update)
         return
     await update.message.reply_text(
-        f"📋 *Cara pakai:*\n\n1. Kirim link video YouTube\n2. Tunggu video dikirim\n3. Tekan 🗑 Hapus kalau sudah selesai\n\n*Limit:* Maks {MAX_FILE_MB}MB per file",
+        f"📋 *Cara pakai:*\n\n1. Kirim link video YouTube\n2. Pilih resolusi (480p / 720p / 1080p)\n3. Tunggu video dikirim\n4. Tekan 🗑 Hapus kalau sudah selesai\n\n*Limit:* Maks {MAX_FILE_MB}MB per file",
         parse_mode="Markdown",
     )
 
@@ -107,13 +110,61 @@ async def handle_url(update, ctx):
         await update.message.reply_text("❌ URL tidak dikenali. Kirim link video YouTube yang valid.")
         return
 
+    # Simpan URL sementara, tampilkan pilihan resolusi (callback_data maks 64 byte,
+    # jadi URL tidak boleh dimasukkan langsung ke tombol).
+    pending = ctx.bot_data.setdefault("pending", {})
+    if len(pending) >= PENDING_LIMIT:
+        pending.pop(next(iter(pending)))
+    token = uuid.uuid4().hex[:10]
+    pending[token] = {"url": url, "user_id": user_id}
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"{q}p", callback_data=f"q|{token}|{q}") for q in QUALITIES],
+        [InlineKeyboardButton("❌ Batal", callback_data=f"q|{token}|0")],
+    ])
+    await update.message.reply_text("🎞 Pilih resolusi video:", reply_markup=keyboard)
+
+
+async def handle_quality(update, ctx):
+    query = update.callback_query
+    user_id = query.from_user.id
+    if not is_allowed(user_id):
+        await deny(update)
+        return
+
+    _, token, height_str = query.data.split("|")
+    height = int(height_str)
+    pending = ctx.bot_data.get("pending", {})
+    item = pending.get(token)
+
+    if not item:
+        await query.answer("⌛ Pilihan kedaluwarsa. Kirim ulang link.", show_alert=True)
+        await query.message.delete()
+        return
+    if user_id != item["user_id"]:
+        await query.answer("⛔ Ini bukan request kamu.", show_alert=True)
+        return
+
+    pending.pop(token, None)
+    if height == 0:
+        await query.answer("Dibatalkan.")
+        await query.message.delete()
+        return
+    if height not in QUALITIES:
+        await query.answer("Resolusi tidak valid.", show_alert=True)
+        return
+
+    await query.answer()
+    status = query.message
+    url = item["url"]
     in_channel = bool(CHANNEL_ID)
-    target = CHANNEL_ID if in_channel else update.effective_chat.id
-    status = await update.message.reply_text("⏳ Download video...")
+    target = CHANNEL_ID if in_channel else query.message.chat.id
+
+    await status.edit_text(f"⏳ Download video {height}p...")
 
     loop = asyncio.get_running_loop()
     try:
-        path, title = await loop.run_in_executor(None, download_video, url)
+        path, title = await loop.run_in_executor(None, download_video, url, height)
     except yt_dlp.utils.DownloadError as e:
         log.error("Download error: %s", e)
         await status.edit_text("❌ Gagal download. Pastikan link valid dan video tidak private.")
@@ -124,7 +175,7 @@ async def handle_url(update, ctx):
         return
 
     await status.edit_text("📤 Mengirim video...")
-    msg = await send_video_file(ctx, target, user_id, path, title)
+    msg = await send_video_file(ctx, target, user_id, path, f"{title} ({height}p)")
     if not msg:
         await status.edit_text(
             f"❌ Gagal kirim video (limit {MAX_FILE_MB}MB, atau bot belum jadi admin di channel)."
@@ -132,7 +183,7 @@ async def handle_url(update, ctx):
         return
 
     if in_channel:
-        link = message_link(target, msg.message_id)
+        link = message_link(msg)
         markup = (
             InlineKeyboardMarkup([[InlineKeyboardButton("📺 Buka di channel", url=link)]])
             if link else None
@@ -160,3 +211,4 @@ async def handle_delete(update, ctx):
     except Exception as e:
         log.error("Gagal hapus pesan: %s", e)
         await query.answer("❌ Gagal hapus. Pastikan bot admin dan punya izin hapus pesan.", show_alert=True)
+

@@ -4,16 +4,17 @@ import yt_dlp
 
 from app.config import DOWNLOAD_DIR, MAX_HEIGHT
 
-FORMAT = (
-    f"bv*[height<={MAX_HEIGHT}][ext=mp4]+ba[ext=m4a]/"
-    f"b[height<={MAX_HEIGHT}][ext=mp4]/"
-    f"bv*[height<={MAX_HEIGHT}]+ba/b[height<={MAX_HEIGHT}]/b"
-)
+def build_format(height):
+    return (
+        f"bv*[height<={height}][ext=mp4]+ba[ext=m4a]/"
+        f"b[height<={height}][ext=mp4]/"
+        f"bv*[height<={height}]+ba/b[height<={height}]/b"
+    )
 
 
-def download_video(url):
+def download_video(url, height=MAX_HEIGHT):
     opts = {
-        "format": FORMAT,
+        "format": build_format(height),
         "merge_output_format": "mp4",
         "outtmpl": str(DOWNLOAD_DIR / "%(title)s.%(ext)s"),
         "quiet": True,
@@ -29,3 +30,4 @@ def download_video(url):
         else:
             path = Path(ydl.prepare_filename(info)).with_suffix(".mp4")
     return path, title
+
